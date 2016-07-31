@@ -8,6 +8,7 @@ function Scope() {
 	// $$ prefix signifies that this variable should be considered private in the Angular framework.
 	this.$$watchers = [];
 	this.$$lastDirtyWatch = null;
+	this.$$asyncQueue = [];
 }
 
 Scope.prototype.$watch = function(watchFn, listenerFn, valueEq) {
@@ -63,6 +64,10 @@ Scope.prototype.$digest = function() {
 	var dirty;
 	this.$$lastDirtyWatch = null;
 	do {
+		while (this.$$asyncQueue.length) {
+			var asyncTask = this.$$asyncQueue.shift();
+			asyncTask.scope.$eval(asyncTask.expression);
+		}
 		dirty = this.$$digestOnce();
 		if (dirty && !(ttl--)) {
 			throw '10 digest iterations reached';
@@ -78,6 +83,35 @@ Scope.prototype.$$areEqual = function(newValue, oldValue, valueEq) {
     	(typeof newValue === 'number' && typeof oldValue === 'number' &&
     		isNaN(newValue) && isNaN(oldValue));
   }
+};
+
+Scope.prototype.$eval = function(expr, locals) {
+	return expr(this, locals);
+};
+
+
+// Allows for execution of code that isn't aware of Angular.
+// If we wrap this code in $apply, then we can be sure that any watches on the scope will
+// pick up on those changes. This is the meaning of "integrating code to the Angular lifecycle
+// using $apply"
+Scope.prototype.$apply = function(expr) {
+	try {
+		return this.$eval(expr);
+	} finally {
+		this.$digest();
+	}
+};
+
+// For deferred execution - execute at some point in the future when the current execution
+// context has finished.
+// $evalAsync takes a function and schedules it to run later, but still during the outgoing digest.
+// Contrast with $timeout with zero delay -- using $timeout relinquishes control to the browser.
+// With $timeout, the browswer decides when to run scheduled work. It could choose to execute
+// other work before it gets to your timeout. However, with $evalAsync, it is guaranteed to run
+// before the browser decides to do anything else.
+// Use $evalAsync to prevent unnecessary rendering
+Scope.prototype.$evalAsync = function(expr) {
+	this.$$asyncQueue.push({scope: this, expression: expr});
 };
 
 module.exports = Scope;
